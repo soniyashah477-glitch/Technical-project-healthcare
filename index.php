@@ -100,12 +100,6 @@ $msg   = $_GET['msg'] ?? '';
                     </div>
 
                     <div class="mt-4 p-3 bg-light rounded small text-muted">
-                        <strong>Test Accounts:</strong><br>
-                        patient@shrs.com / Patient@123<br>
-                        doctor@shrs.com / Doctor@123<br>
-                        pharma@shrs.com / Pharma@123<br>
-                        insurer@shrs.com / Insurer@123<br>
-                        admin@shrs.com / Admin@123
                     </div>
                 </div>
             </div>

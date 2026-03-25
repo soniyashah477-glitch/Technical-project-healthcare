@@ -94,7 +94,7 @@ function risk_badge(string $level): string {
 <!-- Welcome -->
 <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
     <div>
-        <h2 class="fw-bold mb-1">Welcome, <?= htmlspecialchars($_SESSION['full_name']) ?> 👋</h2>
+        <h2 class="fw-bold mb-1">Welcome, <?= htmlspecialchars($_SESSION['full_name']) ?> </h2>
         <p class="text-muted mb-0">Here's your health summary for today — <?= date('l, d F Y') ?></p>
     </div>
     <a href="<?= BASE_URL ?>/modules/appointments/book_appointment.php" class="btn btn-primary">
