@@ -37,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['dispense_id'])) {
     exit;
 }
 
-// Pending prescriptions
+// Pending prescriptions — ALL active ones (pharmacist needs to see queue to dispense)
 $pending = [];
 $stmt = $conn->prepare(
     "SELECT pr.*, u_p.full_name AS patient_name, u_c.full_name AS clinician_name
@@ -50,10 +50,24 @@ $stmt = $conn->prepare(
 $stmt->execute();
 $r = $stmt->get_result(); while ($row = $r->fetch_assoc()) $pending[] = $row; $stmt->close();
 
-// Counts
-$total_pending   = count($pending);
-$dispensed_today = (int)$conn->query("SELECT COUNT(*) AS c FROM prescriptions WHERE dispensed_by=$uid AND DATE(dispensed_at)=CURDATE()")->fetch_assoc()['c'];
-$total_active    = (int)$conn->query("SELECT COUNT(*) AS c FROM prescriptions WHERE status='active'")->fetch_assoc()['c'];
+// ============================================================
+//  FIXED COUNTS — scoped to THIS pharmacist only
+// ============================================================
+
+// Dispensed TODAY by this pharmacist only
+$stmt = $conn->prepare("SELECT COUNT(*) AS c FROM prescriptions WHERE dispensed_by=? AND DATE(dispensed_at)=CURDATE()");
+$stmt->bind_param('i', $uid); $stmt->execute();
+$dispensed_today = (int)$stmt->get_result()->fetch_assoc()['c'];
+$stmt->close();
+
+// Total dispensed EVER by this pharmacist
+$stmt = $conn->prepare("SELECT COUNT(*) AS c FROM prescriptions WHERE dispensed_by=?");
+$stmt->bind_param('i', $uid); $stmt->execute();
+$my_total_dispensed = (int)$stmt->get_result()->fetch_assoc()['c'];
+$stmt->close();
+
+// Total currently pending in the queue (all, so pharmacist knows workload)
+$total_pending = count($pending);
 
 include __DIR__ . '/../includes/header.php';
 include __DIR__ . '/../includes/navbar.php';
@@ -64,7 +78,7 @@ include __DIR__ . '/../includes/navbar.php';
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
         <h2 class="fw-bold mb-1">Pharmacist Dashboard</h2>
-        <p class="text-muted mb-0"><?= date('l, d F Y') ?></p>
+        <p class="text-muted mb-0"><?= date('l, d F Y') ?> — <?= htmlspecialchars($_SESSION['full_name']) ?></p>
     </div>
     <a href="<?= BASE_URL ?>/modules/prescriptions/view_prescriptions.php" class="btn btn-outline-primary">
         <i class="bi bi-list-ul me-2"></i>All Prescriptions
@@ -75,19 +89,19 @@ include __DIR__ . '/../includes/navbar.php';
     <div class="col-md-4">
         <div class="stat-card bg-gradient-warning">
             <div class="stat-icon"><i class="bi bi-hourglass-split"></i></div>
-            <div><div class="stat-value"><?= $total_active ?></div><div class="stat-label">Pending Prescriptions</div></div>
+            <div><div class="stat-value"><?= $total_pending ?></div><div class="stat-label">Pending in Queue</div></div>
         </div>
     </div>
     <div class="col-md-4">
         <div class="stat-card bg-gradient-success">
             <div class="stat-icon"><i class="bi bi-check2-circle"></i></div>
-            <div><div class="stat-value"><?= $dispensed_today ?></div><div class="stat-label">Dispensed Today</div></div>
+            <div><div class="stat-value"><?= $dispensed_today ?></div><div class="stat-label">I Dispensed Today</div></div>
         </div>
     </div>
     <div class="col-md-4">
         <div class="stat-card bg-gradient-primary">
             <div class="stat-icon"><i class="bi bi-capsule"></i></div>
-            <div><div class="stat-value"><?= $total_pending ?></div><div class="stat-label">In Queue</div></div>
+            <div><div class="stat-value"><?= $my_total_dispensed ?></div><div class="stat-label">My Total Dispensed</div></div>
         </div>
     </div>
 </div>
@@ -106,7 +120,6 @@ include __DIR__ . '/../includes/navbar.php';
             <tbody>
             <?php foreach ($pending as $rx): ?>
             <?php
-                // Drug interaction / allergy check
                 $allergy_warn = false;
                 $stmt_al = $conn->prepare("SELECT allergies FROM patients WHERE patient_id = ?");
                 $stmt_al->bind_param('i', $rx['patient_id']); $stmt_al->execute();
