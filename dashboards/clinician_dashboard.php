@@ -16,7 +16,7 @@ if ($_SESSION['role'] !== 'clinician' && $_SESSION['role'] !== 'admin') {
 $uid = (int)$_SESSION['user_id'];
 $page_title = 'Clinician Dashboard';
 
-// Today's appointments
+// Today's appointments — only THIS doctor's
 $today_appts = [];
 $stmt = $conn->prepare(
     "SELECT a.*, u.full_name AS patient_name FROM appointments a
@@ -27,7 +27,7 @@ $stmt = $conn->prepare(
 $stmt->bind_param('i', $uid); $stmt->execute();
 $r = $stmt->get_result(); while ($row = $r->fetch_assoc()) $today_appts[] = $row; $stmt->close();
 
-// Recent records created by this clinician
+// Recent records — only created by THIS doctor
 $recent_records = [];
 $stmt = $conn->prepare(
     "SELECT hr.*, u.full_name AS patient_name FROM health_records hr
@@ -37,15 +37,33 @@ $stmt = $conn->prepare(
 $stmt->bind_param('i', $uid); $stmt->execute();
 $r = $stmt->get_result(); while ($row = $r->fetch_assoc()) $recent_records[] = $row; $stmt->close();
 
-// Deterioration alerts
+// Deterioration alerts — only THIS doctor's patients
 require_once __DIR__ . '/../modules/ai_engine/deterioration_alert.php';
 $high_risk = get_high_risk_patients();
 
-// Counts
-$total_patients = (int)$conn->query("SELECT COUNT(*) AS c FROM patients")->fetch_assoc()['c'];
-$pending_rx     = (int)$conn->query("SELECT COUNT(*) AS c FROM prescriptions WHERE status = 'active'")->fetch_assoc()['c'];
-$today_count    = count($today_appts);
-$alerts_count   = count($high_risk);
+// ============================================================
+//  FIXED COUNTS — all scoped to THIS doctor only
+// ============================================================
+
+// My patients = patients who have appointments or records with me
+$stmt = $conn->prepare(
+    "SELECT COUNT(DISTINCT p.patient_id) AS c FROM patients p
+     LEFT JOIN appointments a ON a.patient_id = p.patient_id AND a.clinician_id = ?
+     LEFT JOIN health_records hr ON hr.patient_id = p.patient_id AND hr.clinician_id = ?
+     WHERE a.clinician_id = ? OR hr.clinician_id = ?");
+$stmt->bind_param('iiii', $uid, $uid, $uid, $uid); $stmt->execute();
+$total_patients = (int)$stmt->get_result()->fetch_assoc()['c'];
+$stmt->close();
+
+// My active prescriptions only
+$stmt = $conn->prepare(
+    "SELECT COUNT(*) AS c FROM prescriptions WHERE prescribing_clinician_id = ? AND status = 'active'");
+$stmt->bind_param('i', $uid); $stmt->execute();
+$pending_rx = (int)$stmt->get_result()->fetch_assoc()['c'];
+$stmt->close();
+
+$today_count  = count($today_appts);
+$alerts_count = count($high_risk);
 
 include __DIR__ . '/../includes/header.php';
 include __DIR__ . '/../includes/navbar.php';
@@ -75,13 +93,13 @@ include __DIR__ . '/../includes/navbar.php';
     <div class="col-6 col-md-3">
         <div class="stat-card bg-gradient-success">
             <div class="stat-icon"><i class="bi bi-people"></i></div>
-            <div><div class="stat-value"><?= $total_patients ?></div><div class="stat-label">Total Patients</div></div>
+            <div><div class="stat-value"><?= $total_patients ?></div><div class="stat-label">My Patients</div></div>
         </div>
     </div>
     <div class="col-6 col-md-3">
         <div class="stat-card bg-gradient-warning">
             <div class="stat-icon"><i class="bi bi-capsule"></i></div>
-            <div><div class="stat-value"><?= $pending_rx ?></div><div class="stat-label">Active Prescriptions</div></div>
+            <div><div class="stat-value"><?= $pending_rx ?></div><div class="stat-label">My Active Prescriptions</div></div>
         </div>
     </div>
     <div class="col-6 col-md-3">
@@ -142,16 +160,19 @@ include __DIR__ . '/../includes/navbar.php';
         </div>
     </div>
 
-    <!-- Recent Records -->
+    <!-- Recent Records — only this doctor's -->
     <div class="col-lg-6">
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <span class="section-title mb-0"><i class="bi bi-file-medical me-2"></i>Recent Records Created</span>
+                <span class="section-title mb-0"><i class="bi bi-file-medical me-2"></i>My Recent Records</span>
                 <a href="<?= BASE_URL ?>/modules/records/search_records.php" class="btn btn-sm btn-outline-primary">All Records</a>
             </div>
             <div class="card-body p-0">
                 <?php if (empty($recent_records)): ?>
-                <div class="p-4 text-center text-muted"><i class="bi bi-file-earmark-x fs-2 d-block mb-2"></i>No records yet.</div>
+                <div class="p-4 text-center text-muted">
+                    <i class="bi bi-file-earmark-x fs-2 d-block mb-2"></i>
+                    No records yet. <a href="<?= BASE_URL ?>/modules/records/create_record.php">Create your first record</a>.
+                </div>
                 <?php else: ?>
                 <div class="table-responsive">
                 <table class="table table-sm table-hover mb-0">
