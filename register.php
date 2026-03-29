@@ -14,6 +14,15 @@ require_once __DIR__ . '/includes/rbac.php';
 $errors  = [];
 $success = false;
 
+// ============================================================
+//  ROLE SECRET CODES — change these to whatever you want!
+// ============================================================
+$role_codes = [
+    'clinician'  => '123',
+    'pharmacist' => '456',
+    'insurer'    => '789',
+];
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_validate()) {
         $errors[] = 'Invalid CSRF token. Please try again.';
@@ -25,12 +34,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $role        = $_POST['role']        ?? 'patient';
         $institution = trim(htmlspecialchars($_POST['institution'] ?? ''));
         $phone       = trim(htmlspecialchars($_POST['phone']       ?? ''));
+        $role_code   = trim($_POST['role_code'] ?? '');
 
-        if (empty($full_name))                $errors[] = 'Full name is required.';
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) $errors[] = 'Invalid email address.';
-        if (strlen($password) < 8)            $errors[] = 'Password must be at least 8 characters.';
-        if ($password !== $confirm)           $errors[] = 'Passwords do not match.';
+        // Basic validations
+        if (empty($full_name))                              $errors[] = 'Full name is required.';
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL))    $errors[] = 'Invalid email address.';
+        if (strlen($password) < 8)                         $errors[] = 'Password must be at least 8 characters.';
+        if ($password !== $confirm)                        $errors[] = 'Passwords do not match.';
         if (!in_array($role, ['patient','clinician','pharmacist','insurer'])) $errors[] = 'Invalid role.';
+
+        // Role code validation for non-patients
+        if (in_array($role, ['clinician','pharmacist','insurer'])) {
+            if (empty($role_code)) {
+                $errors[] = 'A registration code is required for ' . ucfirst($role) . '.';
+            } elseif ($role_code !== $role_codes[$role]) {
+                $errors[] = 'Invalid registration code for ' . ucfirst($role) . '. Please contact your administrator.';
+            }
+        }
 
         if (empty($errors)) {
             // Check email uniqueness
@@ -38,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $chk->bind_param('s', $email);
             $chk->execute();
             if ($chk->get_result()->num_rows > 0) {
-                $errors[] = 'This email address is already registered.';
+                $errors[] = 'This email address is already registered. Please use a different email or log in.';
             }
             $chk->close();
         }
@@ -52,14 +72,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $new_uid = $conn->insert_id;
                 $ins->close();
 
-                // If patient role, create patient record too
+                // If patient role, create patient record with unique Patient ID
                 if ($role === 'patient') {
-                    $dob = $_POST['dob'] ?? null;
+                    $dob    = $_POST['dob']    ?? null;
                     $gender = $_POST['gender'] ?? null;
+
+                    // Generate unique Patient ID: PAT-XXXXX (zero-padded)
+                    $unique_patient_id = 'PAT-' . str_pad($new_uid, 5, '0', STR_PAD_LEFT);
+
                     $pi = $conn->prepare("INSERT INTO patients (user_id, date_of_birth, gender) VALUES (?, ?, ?)");
                     $pi->bind_param('iss', $new_uid, $dob, $gender);
                     $pi->execute();
                     $pi->close();
+
+                    // Store patient ID in session to show after registration
+                    $_SESSION['new_patient_id'] = $unique_patient_id;
                 }
 
                 $success = true;
@@ -97,7 +124,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <?php if ($success): ?>
                     <div class="alert alert-success">
                         <i class="bi bi-check-circle me-2"></i>Registration successful!
-                        <a href="<?= BASE_URL ?>/index.php" class="alert-link">Click here to log in</a>.
+                        <?php if (!empty($_SESSION['new_patient_id'])): ?>
+                        <div class="mt-2 p-2 bg-light rounded text-center">
+                            <strong>Your Unique Patient ID:</strong><br>
+                            <span class="fs-4 fw-bold text-primary"><?= htmlspecialchars($_SESSION['new_patient_id']) ?></span><br>
+                            <small class="text-muted">Please save this ID — doctors will use it to find your records.</small>
+                        </div>
+                        <?php unset($_SESSION['new_patient_id']); ?>
+                        <?php endif; ?>
+                        <div class="mt-2">
+                            <a href="<?= BASE_URL ?>/index.php" class="alert-link">Click here to log in</a>.
+                        </div>
                     </div>
                     <?php endif; ?>
 
@@ -143,6 +180,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <label class="form-label">Institution / Hospital</label>
                                 <input type="text" name="institution" class="form-control" value="<?= htmlspecialchars($_POST['institution'] ?? '') ?>">
                             </div>
+
+                            <!-- Role Code Field (shown only for Clinician, Pharmacist, Insurer) -->
+                            <div class="col-12" id="roleCodeField" style="display:none;">
+                                <label class="form-label">Registration Code *</label>
+                                <input type="password" name="role_code" class="form-control" placeholder="Enter the code provided by your administrator" value="">
+                                <div class="form-text text-muted"><i class="bi bi-shield-lock me-1"></i>This code is required to register as a healthcare professional.</div>
+                            </div>
+
+                            <!-- Patient-only fields -->
                             <div id="patientFields">
                                 <div class="col-md-6 mt-3">
                                     <label class="form-label">Date of Birth</label>
@@ -156,6 +202,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         <option value="female">Female</option>
                                         <option value="other">Other</option>
                                     </select>
+                                </div>
+                                <div class="col-12 mt-2">
+                                    <div class="alert alert-info py-2 mb-0">
+                                        <i class="bi bi-info-circle me-2"></i>
+                                        A unique <strong>Patient ID</strong> (e.g. PAT-00001) will be generated for you after registration. Doctors can use it to find your records.
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -177,7 +229,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 document.getElementById('roleSelect').addEventListener('change', function(){
-    document.getElementById('patientFields').style.display = (this.value === 'patient') ? '' : 'none';
+    var role = this.value;
+    // Show/hide patient fields
+    document.getElementById('patientFields').style.display = (role === 'patient') ? '' : 'none';
+    // Show/hide role code field for professionals
+    document.getElementById('roleCodeField').style.display = (['clinician','pharmacist','insurer'].includes(role)) ? '' : 'none';
 });
 document.getElementById('roleSelect').dispatchEvent(new Event('change'));
 </script>
